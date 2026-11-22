@@ -1,0 +1,11 @@
+[package]
+name = "tuishou-peng"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+description = "Shared capacity and limits code for Tuishou"
+repository = "https://github.com/ddproxy/tuishou-peng"
+publish = false
+
+[dependencies]
