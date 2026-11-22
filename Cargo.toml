@@ -6,6 +6,9 @@ rust-version = "1.99.1"
 license = "MIT"
 description = "Shared capacity and limits code for Tuishou"
 repository = "https://github.com/ddproxy/tuishou-peng"
-publish = false
+homepage = "https://github.com/ddproxy/tuishou"
+readme = "README.md"
+keywords = ["tuishou", "agents", "job-queue"]
+categories = ["development-tools"]
 
 [dependencies]
