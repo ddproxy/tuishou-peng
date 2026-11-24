@@ -73,6 +73,10 @@ jobs:
           if [ -n "$stable_tag" ]; then
             count="$(git rev-list --count "${stable_tag}..HEAD")"
           fi
+          if [ -n "$stable_tag" ] && [ "$count" -eq 0 ]; then
+            echo "HEAD is ${stable_tag} itself; skipping"
+            exit 0
+          fi
           base="$(python3 scripts/set-release-version.py --print-version)"
           short_hash="$(git rev-parse --short=7 HEAD)"
           tag="$(python3 scripts/set-release-version.py --dev-tag "$base" "$count" "$short_hash")"
