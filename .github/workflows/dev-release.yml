@@ -1,0 +1,126 @@
+name: Dev Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  tag:
+    name: Tag dev build
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.dev-tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Create dev tag
+        id: dev-tag
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin main --tags --force
+          if [ "$HEAD_SHA" != "$(git rev-parse origin/main)" ]; then
+            echo "main moved past ${HEAD_SHA}; skipping"
+            exit 0
+          fi
+          if [ "$HEAD_SHA" != "$(git rev-parse HEAD)" ]; then
+            echo "checkout is not the CI commit; skipping"
+            exit 0
+          fi
+
+          stable_tag="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          previous_tag="$(git tag --list 'v*-dev.*' | sort -V | tail -n 1 || true)"
+          if [ -n "$previous_tag" ] && git merge-base --is-ancestor "$previous_tag" HEAD; then
+            range_start="$previous_tag"
+          else
+            range_start="$stable_tag"
+          fi
+
+          docs_only=1
+          if [ -n "$range_start" ]; then
+            changed="$(git diff --name-only "${range_start}..HEAD")"
+          else
+            changed="$(git ls-tree -r --name-only HEAD)"
+          fi
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            case "$path" in
+              *.md|docs/*|LICENSE|LICENSE.*) ;;
+              *) docs_only=0; break ;;
+            esac
+          done <<< "$changed"
+          if [ "$docs_only" -eq 1 ]; then
+            echo "only documentation changed; skipping"
+            exit 0
+          fi
+
+          count=0
+          if [ -n "$stable_tag" ]; then
+            count="$(git rev-list --count "${stable_tag}..HEAD")"
+          fi
+          base="$(python3 scripts/set-release-version.py --print-version)"
+          short_hash="$(git rev-parse --short=7 HEAD)"
+          tag="$(python3 scripts/set-release-version.py --dev-tag "$base" "$count" "$short_hash")"
+
+          if git show-ref --verify --quiet "refs/tags/${tag}" ||
+            git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists; skipping"
+            exit 0
+          fi
+
+          git tag "$tag" "$HEAD_SHA"
+          git push origin "refs/tags/${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish dev pre-release
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      prerelease: true
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      attestations: write
+
+  prune:
+    name: Prune old dev pre-releases
+    needs: publish
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete dev pre-releases past the newest ten
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release list --limit 1000 --json tagName,isPrerelease,createdAt \
+            | jq -r '.[] | select(.isPrerelease) | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-dev\\.[0-9]+\\.g[0-9a-f]+$")) | [.createdAt, .tagName] | @tsv' \
+            | sort -r \
+            | tail -n +11 \
+            | cut -f2- \
+            | while IFS= read -r old_tag; do
+                [ -n "$old_tag" ] || continue
+                echo "deleting ${old_tag}"
+                gh release delete "$old_tag" --yes --cleanup-tag
+              done

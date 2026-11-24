@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - 'v*'
+      - '!v*-dev.*'
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to release
+        required: true
+        type: string
+      prerelease:
+        description: Publish as a pre-release
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -13,32 +25,43 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Set release version
+        run: python3 scripts/set-release-version.py "$TAG"
       - name: Create source archive
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
           OUT="tuishou-peng-${TAG}-src"
           git archive --format=tar.gz --prefix="${OUT}/" -o "${OUT}.tar.gz" HEAD
           sha256sum "${OUT}.tar.gz" > "${OUT}.tar.gz.sha256"
       - name: Upload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tuishou-peng-${{ github.ref_name }}-src
+          name: tuishou-peng-${{ inputs.tag || github.ref_name }}-src
           path: |
-            tuishou-peng-${{ github.ref_name }}-src.tar.gz
-            tuishou-peng-${{ github.ref_name }}-src.tar.gz.sha256
+            tuishou-peng-${{ inputs.tag || github.ref_name }}-src.tar.gz
+            tuishou-peng-${{ inputs.tag || github.ref_name }}-src.tar.gz.sha256
 
   sbom:
     name: SBOM
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Set release version
+        run: python3 scripts/set-release-version.py "$TAG"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
@@ -48,12 +71,12 @@ jobs:
       - name: Generate CycloneDX SBOM
         run: |
           cargo install cargo-cyclonedx --locked
-          cargo cyclonedx --format json --override-filename "tuishou-peng-${GITHUB_REF_NAME}.cdx"
+          cargo cyclonedx --format json --override-filename "tuishou-peng-${TAG}.cdx"
       - name: Upload SBOM
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tuishou-peng-${{ github.ref_name }}-sbom
-          path: tuishou-peng-${{ github.ref_name }}.cdx.json
+          name: tuishou-peng-${{ inputs.tag || github.ref_name }}-sbom
+          path: tuishou-peng-${{ inputs.tag || github.ref_name }}.cdx.json
 
   release:
     name: Release
@@ -64,9 +87,14 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      PRERELEASE: ${{ inputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - name: Download artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,4 +110,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" release/* --title "${GITHUB_REF_NAME}" --generate-notes
+          set -euo pipefail
+          args=()
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" release/* --title "$TAG" --generate-notes "${args[@]}"
