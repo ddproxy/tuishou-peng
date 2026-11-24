@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Automatic dev pre-releases after CI succeeds on `main`, with commit-count tags, shared release workflow, and pruning to the ten newest dev pre-releases.
+- `scripts/set-release-version.py` and tests: stable tags must match the `Cargo.toml` version, while dev tags rewrite only the release checkout.
+- Workflow policy checks for the dev release path, and script tests in CI.
+
 ## [0.1.0] - 2026-11-22
 
 ### Added

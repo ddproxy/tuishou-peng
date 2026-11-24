@@ -126,11 +126,47 @@ else
   check_path "$root/.github/workflows"
 fi
 
+require_file() {
+  if [ ! -f "$1" ]; then
+    echo "missing: $1" >&2
+    fail=1
+  fi
+}
+
+require_text() {
+  if ! grep -qF -- "$2" "$1"; then
+    echo "missing policy row in $1: $2" >&2
+    fail=1
+  fi
+}
+
 if [ "$explicit_paths" -eq 0 ]; then
   # dependency-review allow-licenses should include deny.toml allows
   if ! grep -q 'NCSA' "$root/.github/workflows/dependency-review.yml"; then
     echo "dependency-review missing NCSA" >&2
     fail=1
+  fi
+
+  # Dev builds go through the same release workflow and prune old pre-releases.
+  dev="$root/.github/workflows/dev-release.yml"
+  shared="$root/.github/workflows/release.yml"
+  require_file "$dev"
+  require_file "$shared"
+  require_file "$root/scripts/set-release-version.py"
+  require_file "$root/scripts/test_set_release_version.py"
+  if [ -f "$dev" ]; then
+    require_text "$dev" 'workflow_run:'
+    require_text "$dev" 'workflows: [CI]'
+    require_text "$dev" 'uses: ./.github/workflows/release.yml'
+    require_text "$dev" '--cleanup-tag'
+  fi
+  if [ -f "$shared" ]; then
+    require_text "$shared" 'workflow_call:'
+    require_text "$shared" 'python3 scripts/set-release-version.py "$TAG"'
+    if ! grep -qE '^[[:space:]]+tag:$' "$shared"; then
+      echo "release workflow missing tag input" >&2
+      fail=1
+    fi
   fi
 fi
 
